@@ -1,0 +1,4 @@
+name,employee_id,department,email
+John Doe,EMP001,Engineering,john@company.com
+Jane Smith,EMP002,HR,jane@company.com
+Raj Patel,EMP003,Finance,raj@company.com

@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FaceID Attendance System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080c14;
+    --surface:  #0d1320;
+    --card:     #111827;
+    --border:   #1e2d42;
+    --accent:   #00d4ff;
+    --green:    #00ff88;
+    --red:      #ff3c5f;
+    --orange:   #ff9500;
+    --muted:    #4a5a72;
+    --text:     #e2e8f0;
+    --text2:    #8899aa;
+    --glow:     0 0 20px rgba(0,212,255,0.3);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Layout ── */
+  .shell { display: flex; min-height: 100vh; position: relative; z-index: 1; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 240px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 24px 0;
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    padding: 0 20px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  .logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), #0066ff);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    margin-bottom: 10px;
+    box-shadow: var(--glow);
+  }
+
+  .logo h1 { font-size: 15px; font-weight: 800; letter-spacing: 0.5px; }
+  .logo p { font-size: 11px; color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 20px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.2s;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+  }
+
+  .nav-item:hover { background: rgba(0,212,255,0.05); color: var(--text); }
+  .nav-item.active {
+    border-left-color: var(--accent);
+    background: rgba(0,212,255,0.08);
+    color: var(--accent);
+  }
+
+  .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-right: 6px;
+    transition: all 0.3s;
+  }
+
+  .status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.5s infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Main content */
+  .main {
+    margin-left: 240px;
+    flex: 1;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* Topbar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .page-title { font-size: 22px; font-weight: 800; }
+  .page-subtitle { font-size: 12px; color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+
+  .topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .card-body { padding: 16px 18px; }
+
+  /* Stat tiles */
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  .stat-tile {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  .stat-tile::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .stat-tile.blue::before { background: var(--accent); }
+  .stat-tile.green::before { background: var(--green); }
+  .stat-tile.red::before { background: var(--red); }
+  .stat-tile.orange::before { background: var(--orange); }
+
+  .stat-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .stat-value { font-size: 32px; font-weight: 800; line-height: 1; }
+  .stat-value.blue { color: var(--accent); }
+  .stat-value.green { color: var(--green); }
+  .stat-value.red { color: var(--red); }
+  .stat-value.orange { color: var(--orange); }
+
+  /* Grid layout */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+
+  /* Camera feed */
+  .cam-wrap {
+    position: relative;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+  }
+
+  #cam-img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .cam-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.7);
+    font-size: 13px;
+    color: var(--text2);
+  }
+
+  .cam-corner {
+    position: absolute;
+    width: 20px; height: 20px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.7;
+  }
+
+  .cam-corner.tl { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
+  .cam-corner.tr { top: 10px; right: 10px; border-width: 2px 2px 0 0; }
+  .cam-corner.bl { bottom: 10px; left: 10px; border-width: 0 0 2px 2px; }
+  .cam-corner.br { bottom: 10px; right: 10px; border-width: 0 2px 2px 0; }
+
+  .cam-badge {
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.7);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: none;
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { background: #00bbee; box-shadow: var(--glow); }
+
+  .btn-success { background: var(--green); color: #000; }
+  .btn-success:hover { opacity: 0.85; }
+
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { opacity: 0.85; }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text2);
+  }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
+  .btn-xs { padding: 4px 8px; font-size: 11px; border-radius: 6px; }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(30,45,66,0.5);
+    vertical-align: middle;
+  }
+
+  tr:hover td { background: rgba(0,212,255,0.03); }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .badge-green { background: rgba(0,255,136,0.12); color: var(--green); }
+  .badge-red { background: rgba(255,60,95,0.12); color: var(--red); }
+  .badge-blue { background: rgba(0,212,255,0.12); color: var(--accent); }
+  .badge-orange { background: rgba(255,149,0,0.12); color: var(--orange); }
+  .badge-muted { background: rgba(74,90,114,0.2); color: var(--text2); }
+
+  /* Detection events */
+  #events-list { max-height: 280px; overflow-y: auto; }
+
+  .event-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(30,45,66,0.4);
+    font-size: 12px;
+    animation: slideIn 0.3s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .event-avatar {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .event-name { font-weight: 700; }
+  .event-time { color: var(--text2); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+  /* Form */
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1/-1; }
+
+  label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+
+  input, select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    transition: border-color 0.2s;
+    outline: none;
+  }
+
+  input:focus, select:focus { border-color: var(--accent); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+
+  .tab {
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text2);
+    transition: all 0.2s;
+    margin-bottom: -1px;
+  }
+
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--green));
+    transition: width 0.5s ease;
+  }
+
+  /* Liveness gauge */
+  .liveness-gauge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .gauge-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .gauge-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+
+  /* Notification toast */
+  #toast-container {
+    position: fixed;
+    bottom: 20px; right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .toast {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 13px;
+    min-width: 260px;
+    animation: toastIn 0.3s ease;
+    pointer-events: all;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .toast.error { border-left-color: var(--red); }
+  .toast.warning { border-left-color: var(--orange); }
+
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(30px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 500;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 480px;
+    max-width: 95vw;
+    animation: modalIn 0.25s ease;
+  }
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.94) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .modal-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+  }
+
+  .modal-body { padding: 20px; }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .close-btn { background: none; border: none; color: var(--text2); font-size: 18px; cursor: pointer; }
+  .close-btn:hover { color: var(--text); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Webcam capture */
+  #reg-video { width: 100%; border-radius: 8px; background: #000; }
+
+  /* Util */
+  .text-muted { color: var(--text2); }
+  .text-mono { font-family: 'JetBrains Mono', monospace; }
+  .mt-12 { margin-top: 12px; }
+  .hidden { display: none !important; }
+  .flex { display: flex; }
+  .items-center { align-items: center; }
+  .gap-8 { gap: 8px; }
+  .gap-10 { gap: 10px; }
+
+  /* Page sections */
+  .page { display: none; }
+  .page.active { display: flex; flex-direction: column; gap: 20px; }
+
+  /* Person card grid */
+  .persons-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+
+  .person-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    transition: border-color 0.2s;
+    cursor: default;
+  }
+
+  .person-card:hover { border-color: var(--accent); }
+
+  .person-avatar {
+    width: 64px; height: 64px;
+    border-radius: 12px;
+    background: var(--border);
+    margin: 0 auto 10px;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+
+  .person-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  .person-name { font-weight: 700; font-size: 14px; }
+  .person-id { font-size: 11px; color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+
+  .embedding-bar { margin-top: 8px; }
+
+  /* Export card */
+  .export-file {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(30,45,66,0.4);
+    font-size: 13px;
+  }
+
+  .export-file:last-child { border-bottom: none; }
+
+  /* Registration steps indicator */
+  .reg-steps {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .reg-step {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+
+  .reg-step.done { background: var(--green); }
+  .reg-step.active { background: var(--accent); animation: stepPulse 1s infinite; }
+
+  @keyframes stepPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">🎯</div>
+      <h1>FaceID Attend</h1>
+      <p>v2.0 · AI System</p>
+    </div>
+
+    <nav>
+      <div class="nav-item active" onclick="navigate('dashboard')">
+        <span class="nav-icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="navigate('live')">
+        <span class="nav-icon">📸</span> Live Feed
+      </div>
+      <div class="nav-item" onclick="navigate('persons')">
+        <span class="nav-icon">👤</span> Persons
+      </div>
+      <div class="nav-item" onclick="navigate('sessions')">
+        <span class="nav-icon">📋</span> Sessions
+      </div>
+      <div class="nav-item" onclick="navigate('attendance')">
+        <span class="nav-icon">✅</span> Attendance Log
+      </div>
+      <div class="nav-item" onclick="navigate('export')">
+        <span class="nav-icon">📤</span> Export / Import
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div style="font-size:12px; color:var(--text2); display:flex; align-items:center;">
+        <span class="status-dot" id="cam-status-dot"></span>
+        <span id="cam-status-txt">Camera Off</span>
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:4px; font-family:'JetBrains Mono';" id="session-label">No active session</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ── DASHBOARD ── -->
+    <div id="page-dashboard" class="page active">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-subtitle" id="dash-date">Loading...</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost btn-sm" onclick="refreshDashboard()">↻ Refresh</button>
+          <button class="btn btn-primary btn-sm" onclick="navigate('live')">▶ Start Camera</button>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-tile blue">
+          <div class="stat-label">Registered Persons</div>
+          <div class="stat-value blue" id="stat-total">—</div>
+        </div>
+        <div class="stat-tile green">
+          <div class="stat-label">Present Today</div>
+          <div class="stat-value green" id="stat-present">—</div>
+        </div>
+        <div class="stat-tile red">
+          <div class="stat-label">Absent</div>
+          <div class="stat-value red" id="stat-absent">—</div>
+        </div>
+        <div class="stat-tile orange">
+          <div class="stat-label">Attendance Rate</div>
+          <div class="stat-value orange" id="stat-rate">—</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            Today's Attendance
+            <span id="session-badge" class="badge badge-muted">No Session</span>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>ID</th>
+                    <th>Dept</th>
+                    <th>Check-in</th>
+                    <th>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody id="today-table-body">
+                  <tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No records yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">Live Detection Events</div>
+          <div class="card-body" style="padding:12px 18px;">
+            <div id="events-list">
+              <div class="text-muted" style="font-size:12px;text-align:center;padding:20px 0;">Start camera to see live events</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LIVE FEED ── -->
+    <div id="page-live" class="page">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Live Camera Feed</div>
+          <div class="page-subtitle">Real-time face detection + attendance marking</div>
+        </div>
+        <div class="topbar-actions">
+          <select id="cam-index-sel" class="btn btn-ghost btn-sm" style="height:36px;">
+            <option value="0">Camera 0 (Default)</option>
+            <option value="1">Camera 1</option>
+            <option value="2">Camera 2</option>
+          </select>
+          <button class="btn btn-success" id="btn-start-cam" onclick="startCamera()">▶ Start Camera</button>
+          <button class="btn btn-danger hidden" id="btn-stop-cam" onclick="stopCamera()">■ Stop</button>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-header">
+            Video Feed
+            <div class="flex items-center gap-8">
+              <span class="status-dot" id="feed-dot"></span>
+              <span id="feed-status-txt" class="text-muted" style="font-size:12px;">Inactive</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="cam-wrap">
+              <img id="cam-img" src="" alt="" style="display:none;">
+              <div class="cam-overlay" id="cam-overlay">
+                <div style="text-align:center;">
+                  <div style="font-size:36px;margin-bottom:8px;">📷</div>
+                  <div>Click "Start Camera" to begin</div>
+                </div>
+              </div>
+              <div class="cam-corner tl"></div>
+              <div class="cam-corner tr"></div>
+              <div class="cam-corner bl"></div>
+              <div class="cam-corner br"></div>
+              <div class="cam-badge" id="cam-session-badge" style="display:none;">
+                <span class="status-dot live"></span>
+                <span id="cam-session-name">No Session</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Session control -->
+          <div class="card">
+            <div class="card-header">Session Control</div>
+            <div class="card-body">
+              <div class="form-group" style="margin-bottom:12px;">
+                <label>Session Name</label>
+                <input type="text" id="session-name-input" placeholder="Morning Roll Call" value="">
+              </div>
+              <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="createSession()">
+                ➕ Create Session
+              </button>
+              <div id="active-session-info" class="hidden" style="margin-top:12px;">
+                <div style="padding:10px;background:var(--surface);border-radius:8px;border:1px solid var(--border);">
+                  <div style="font-size:11px;color:var(--text2);">ACTIVE SESSION</div>
+                  <div id="active-session-name" style="font-weight:700;margin:4px 0;"></div>
+                  <div id="active-session-stats" style="font-size:12px;color:var(--text2);"></div>
+                  <button class="btn btn-danger btn-sm mt-12" style="width:100%;justify-content:center;" onclick="endActiveSession()">
+                    End Session
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live detections -->
+          <div class="card" style="flex:1;">
+            <div class="card-header">
+              Detected Faces
+              <span id="faces-count" class="badge badge-blue">0</span>
+            </div>
+            <div class="card-body" id="live-detections-panel" style="padding:10px 14px;">
+              <div class="text-muted" style="font-size:12px;text-align:center;padding:16px 0;">No faces detected</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PERSONS ── -->
+    <div id="page-persons" class="page">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Registered Persons</div>
+          <div class="page-subtitle" id="persons-subtitle">Loading...</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost btn-sm" onclick="refreshPersons()">↻ Refresh</button>
+          <button class="btn btn-primary" onclick="openAddPersonModal()">➕ Add Person</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="persons-grid" id="persons-grid">
+            <div class="text-muted" style="font-size:13px;padding:20px;">Loading persons...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SESSIONS ── -->
+    <div id="page-sessions" class="page">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Sessions</div>
+          <div class="page-subtitle">Manage attendance sessions</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost btn-sm" onclick="refreshSessions()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">All Sessions</div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Date</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-table-body">
+                <tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px;">No sessions</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ATTENDANCE ── -->
+    <div id="page-attendance" class="page">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Attendance Log</div>
+          <div class="page-subtitle">Full history of marked attendance</div>
+        </div>
+        <div class="topbar-actions">
+          <select id="att-session-filter" class="btn btn-ghost btn-sm" onchange="filterAttendance()" style="height:36px;">
+            <option value="">Today</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="refreshAttendance()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          Attendance Records
+          <span id="att-count" class="badge badge-blue">0</span>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Employee ID</th>
+                  <th>Department</th>
+                  <th>Check-in Time</th>
+                  <th>Confidence</th>
+                  <th>Liveness</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="att-table-body">
+                <tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px;">No records</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── EXPORT ── -->
+    <div id="page-export" class="page">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Export / Import</div>
+          <div class="page-subtitle">Download attendance data or import person lists</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">Export Data</div>
+          <div class="card-body">
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <button class="btn btn-ghost" onclick="exportData('attendance/csv')" style="justify-content:center;">
+                📄 Export Today's Attendance (CSV)
+              </button>
+              <button class="btn btn-ghost" onclick="exportData('attendance/excel')" style="justify-content:center;">
+                📊 Export Today's Attendance (Excel)
+              </button>
+              <button class="btn btn-ghost" onclick="exportData('persons/csv')" style="justify-content:center;">
+                👤 Export All Persons (CSV)
+              </button>
+              <button class="btn btn-primary" onclick="exportData('full')" style="justify-content:center;">
+                📦 Export Full Report (Excel)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">Import Persons</div>
+          <div class="card-body">
+            <div style="background:var(--surface);border:1px dashed var(--border);border-radius:8px;padding:20px;text-align:center;margin-bottom:14px;">
+              <div style="font-size:28px;margin-bottom:8px;">📁</div>
+              <div style="font-size:13px;font-weight:700;margin-bottom:4px;">Upload CSV File</div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:14px;">Required columns: name, employee_id<br>Optional: department, email</div>
+              <input type="file" id="import-file" accept=".csv" style="display:none;" onchange="importPersons()">
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">
+                Choose File
+              </button>
+            </div>
+            <div id="import-result" class="hidden" style="padding:10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:8px;font-size:13px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          Recent Exports
+          <button class="btn btn-ghost btn-xs" onclick="refreshExports()">↻</button>
+        </div>
+        <div class="card-body">
+          <div id="exports-list">
+            <div class="text-muted" style="font-size:12px;text-align:center;padding:20px;">Loading exports...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── ADD PERSON MODAL ── -->
+<div class="modal-overlay" id="modal-add-person">
+  <div class="modal">
+    <div class="modal-header">
+      Add New Person
+      <button class="close-btn" onclick="closeModal('modal-add-person')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('add-person','details')">1. Details</div>
+        <div class="tab" id="tab-register" onclick="switchTab('add-person','register')">2. Register Face</div>
+      </div>
+
+      <div id="add-person-details" class="tab-pane active">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Full Name *</label>
+            <input type="text" id="p-name" placeholder="John Doe">
+          </div>
+          <div class="form-group">
+            <label>Employee ID *</label>
+            <input type="text" id="p-empid" placeholder="EMP001">
+          </div>
+          <div class="form-group">
+            <label>Department</label>
+            <input type="text" id="p-dept" placeholder="Engineering">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="p-email" placeholder="john@company.com">
+          </div>
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="saveNewPerson()">
+          Save & Continue →
+        </button>
+      </div>
+
+      <div id="add-person-register" class="tab-pane">
+        <div id="reg-steps" class="reg-steps">
+          <div class="reg-step done"></div>
+          <div class="reg-step done"></div>
+          <div class="reg-step done"></div>
+          <div class="reg-step active"></div>
+          <div class="reg-step"></div>
+        </div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px;">
+          Capture <strong id="reg-count-txt">0/5</strong> face samples. Look straight, then slightly left/right.
+          Anti-spoof: only live faces accepted during registration.
+        </p>
+        <div style="position:relative;">
+          <video id="reg-video" autoplay muted playsinline></video>
+          <canvas id="reg-canvas" style="display:none;"></canvas>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          <button class="btn btn-success" style="flex:1;justify-content:center;" onclick="captureFrame()" id="btn-capture">
+            📸 Capture Sample
+          </button>
+          <button class="btn btn-ghost" style="flex:1;justify-content:center;" onclick="finishRegistration()" id="btn-finish-reg" disabled>
+            ✅ Done
+          </button>
+        </div>
+        <div id="reg-feedback" style="margin-top:10px;font-size:12px;color:var(--text2);text-align:center;min-height:20px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── REGISTER FACE MODAL (for existing person) ── -->
+<div class="modal-overlay" id="modal-reg-face">
+  <div class="modal">
+    <div class="modal-header">
+      Register Face Samples
+      <button class="close-btn" onclick="closeModal('modal-reg-face'); stopRegCamera()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px;">
+        Registering for: <strong id="reg-person-name"></strong> · 
+        Captured: <strong id="reg-cap-count">0</strong>/5
+      </p>
+      <div style="position:relative;">
+        <video id="reg-video2" autoplay muted playsinline></video>
+        <canvas id="reg-canvas2" style="display:none;"></canvas>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px;">
+        <button class="btn btn-success" style="flex:1;justify-content:center;" onclick="captureFrame2()">
+          📸 Capture
+        </button>
+        <button class="btn btn-ghost" style="flex:1;justify-content:center;" onclick="finishRegistration2(); closeModal('modal-reg-face');" id="btn-fin2" disabled>
+          ✅ Done
+        </button>
+      </div>
+      <div id="reg-feedback2" style="margin-top:10px;font-size:12px;color:var(--text2);text-align:center;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+const API = "http://localhost:5000/api";
+let camInterval = null;
+let statsInterval = null;
+let regStream = null;
+let regStream2 = null;
+let newPersonId = null;
+let regCapCount = 0;
+let regCapCount2 = 0;
+let regPersonId2 = null;
+const MAX_SAMPLES = 5;
+
+// ── Navigation ──────────────────────────────────────────────────────────────
+
+function navigate(page) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  document.getElementById("page-" + page).classList.add("active");
+  const items = document.querySelectorAll(".nav-item");
+  const labels = ["dashboard","live","persons","sessions","attendance","export"];
+  items[labels.indexOf(page)]?.classList.add("active");
+
+  if (page === "persons") refreshPersons();
+  if (page === "sessions") refreshSessions();
+  if (page === "attendance") { refreshAttendance(); populateSessionFilter(); }
+  if (page === "export") refreshExports();
+  if (page === "dashboard") refreshDashboard();
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+
+async function refreshDashboard() {
+  document.getElementById("dash-date").textContent = new Date().toLocaleDateString("en-IN", {
+    weekday:"long", year:"numeric", month:"long", day:"numeric"
+  });
+
+  try {
+    const [statsRes, todayRes, sessRes] = await Promise.all([
+      fetch(`${API}/attendance/stats`),
+      fetch(`${API}/attendance/today`),
+      fetch(`${API}/sessions/active`),
+    ]);
+
+    const stats = await statsRes.json();
+    const today = await todayRes.json();
+    const sess = await sessRes.json();
+
+    document.getElementById("stat-total").textContent = stats.total;
+    document.getElementById("stat-present").textContent = stats.present;
+    document.getElementById("stat-absent").textContent = stats.absent;
+    const rate = stats.total > 0 ? Math.round((stats.present / stats.total) * 100) : 0;
+    document.getElementById("stat-rate").textContent = rate + "%";
+
+    if (sess) {
+      document.getElementById("session-badge").textContent = sess.name;
+      document.getElementById("session-badge").className = "badge badge-green";
+      document.getElementById("session-label").textContent = sess.name;
+    }
+
+    const tbody = document.getElementById("today-table-body");
+    if (today.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No attendance marked yet</td></tr>`;
+    } else {
+      tbody.innerHTML = today.map(r => `
+        <tr>
+          <td><strong>${r.name}</strong></td>
+          <td class="text-mono" style="font-size:12px;">${r.employee_id}</td>
+          <td>${r.department || "—"}</td>
+          <td class="text-mono" style="font-size:12px;">${r.check_in.split("T")[1]?.slice(0,8) || r.check_in.slice(-8)}</td>
+          <td><div class="liveness-gauge"><div class="gauge-bar"><div class="gauge-fill" style="width:${Math.round(r.confidence*100)}%;background:var(--green);"></div></div>${Math.round(r.confidence*100)}%</div></td>
+        </tr>
+      `).join("");
+    }
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+// ── Camera ──────────────────────────────────────────────────────────────────
+
+async function startCamera() {
+  const idx = document.getElementById("cam-index-sel").value;
+  try {
+    const res = await fetch(`${API}/camera/start`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({camera_index: parseInt(idx)})
+    });
+    const d = await res.json();
+    if (d.error) { toast(d.error, "error"); return; }
+
+    document.getElementById("btn-start-cam").classList.add("hidden");
+    document.getElementById("btn-stop-cam").classList.remove("hidden");
+    document.getElementById("cam-overlay").style.display = "none";
+    document.getElementById("cam-img").style.display = "block";
+    document.getElementById("feed-status-txt").textContent = "Live";
+    document.getElementById("feed-dot").classList.add("live");
+    document.getElementById("cam-status-dot").classList.add("live");
+    document.getElementById("cam-status-txt").textContent = "Camera Live";
+    document.getElementById("cam-session-badge").style.display = "flex";
+    toast("Camera started!", "success");
+
+    camInterval = setInterval(pollFrame, 80);
+    statsInterval = setInterval(pollStats, 2000);
+    refreshActiveSession();
+  } catch(e) {
+    toast("Cannot connect to backend. Is the server running?", "error");
+  }
+}
+
+async function stopCamera() {
+  await fetch(`${API}/camera/stop`, {method:"POST"});
+  clearInterval(camInterval);
+  clearInterval(statsInterval);
+  camInterval = null;
+  document.getElementById("btn-start-cam").classList.remove("hidden");
+  document.getElementById("btn-stop-cam").classList.add("hidden");
+  document.getElementById("cam-overlay").style.display = "flex";
+  document.getElementById("cam-img").style.display = "none";
+  document.getElementById("feed-status-txt").textContent = "Inactive";
+  document.getElementById("feed-dot").classList.remove("live");
+  document.getElementById("cam-status-dot").classList.remove("live");
+  document.getElementById("cam-status-txt").textContent = "Camera Off";
+  document.getElementById("cam-session-badge").style.display = "none";
+  toast("Camera stopped");
+}
+
+async function pollFrame() {
+  try {
+    const res = await fetch(`${API}/camera/frame`);
+    const d = await res.json();
+    if (d.frame) {
+      document.getElementById("cam-img").src = "data:image/jpeg;base64," + d.frame;
+    }
+    updateDetectionPanel(d.detections || []);
+  } catch(e) {}
+}
+
+function updateDetectionPanel(detections) {
+  document.getElementById("faces-count").textContent = detections.length;
+  const panel = document.getElementById("live-detections-panel");
+
+  if (detections.length === 0) {
+    panel.innerHTML = `<div class="text-muted" style="font-size:12px;text-align:center;padding:16px 0;">No faces in frame</div>`;
+    return;
+  }
+
+  panel.innerHTML = detections.map((d, i) => {
+    // liveness_score and photo_score are 0–100
+    const livePct   = Math.min(100, Math.round(d.liveness_score || 0));
+    const photoPct  = Math.min(100, Math.round(d.photo_score   || 0));
+    const conf      = Math.round((d.confidence || 0) * 100);
+    const statusMsg = d.status_msg || "";
+    const liveColor  = d.is_live ? "var(--green)" : "var(--red)";
+    const photoColor = photoPct >= 40 ? "var(--red)" : "var(--green)";
+    return `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <strong style="font-size:13px;">${d.name}</strong>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+            ${d.marked ? '<span class="badge badge-green">✓ Marked</span>' : ''}
+            ${d.is_live ? '<span class="badge badge-green">✓ Live</span>' : '<span class="badge badge-red">⛔ Photo/Spoof</span>'}
+          </div>
+        </div>
+        ${d.person_id ? `<div style="font-size:11px;color:var(--text2);margin-bottom:5px;">Match: ${conf}%</div>` : ''}
+        <div style="font-size:10px;color:var(--text2);margin-bottom:2px;letter-spacing:0.5px;">LIVENESS SCORE &nbsp;(need ≥ 60 to pass)</div>
+        <div class="liveness-gauge" style="margin-bottom:7px;">
+          <div class="gauge-bar" style="height:7px;"><div class="gauge-fill" style="width:${livePct}%;background:${liveColor};height:7px;border-radius:4px;"></div></div>
+          <span style="font-size:13px;font-family:'JetBrains Mono';color:${liveColor};font-weight:800;min-width:32px;text-align:right;">${livePct}</span>
+        </div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:2px;letter-spacing:0.5px;">PHOTO SCORE &nbsp;(rejected if ≥ 40)</div>
+        <div class="liveness-gauge" style="margin-bottom:${statusMsg?'7px':'0'};">
+          <div class="gauge-bar" style="height:7px;"><div class="gauge-fill" style="width:${photoPct}%;background:${photoColor};height:7px;border-radius:4px;"></div></div>
+          <span style="font-size:13px;font-family:'JetBrains Mono';color:${photoColor};font-weight:800;min-width:32px;text-align:right;">${photoPct}</span>
+        </div>
+        ${statusMsg ? `<div style="font-size:11px;color:var(--orange);margin-top:3px;">${statusMsg}</div>` : ''}
+      </div>
+    `;
+  }).join("");
+
+  // Update events list in dashboard
+  detections.forEach(d => {
+    if (d.marked) addEvent(d.name, d.confidence);
+  });
+}
+
+function addEvent(name, confidence) {
+  const list = document.getElementById("events-list");
+  const existing = list.querySelector(`[data-name="${name}"]`);
+  if (existing) return;
+
+  const item = document.createElement("div");
+  item.className = "event-item";
+  item.setAttribute("data-name", name);
+  const now = new Date().toLocaleTimeString();
+  item.innerHTML = `
+    <div class="event-avatar">✅</div>
+    <div>
+      <div class="event-name">${name}</div>
+      <div class="event-time">${now} · ${Math.round(confidence*100)}% confidence</div>
+    </div>
+  `;
+
+  if (list.children[0]?.textContent?.includes("Start camera")) list.innerHTML = "";
+  list.insertBefore(item, list.firstChild);
+
+  if (list.children.length > 20) list.removeChild(list.lastChild);
+}
+
+async function pollStats() {
+  try {
+    const res = await fetch(`${API}/attendance/stats`);
+    const s = await res.json();
+    document.getElementById("stat-total").textContent = s.total;
+    document.getElementById("stat-present").textContent = s.present;
+    document.getElementById("stat-absent").textContent = s.absent;
+    const rate = s.total > 0 ? Math.round((s.present/s.total)*100) : 0;
+    document.getElementById("stat-rate").textContent = rate + "%";
+  } catch(e) {}
+}
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+
+async function createSession() {
+  const name = document.getElementById("session-name-input").value.trim() ||
+               "Session " + new Date().toLocaleString();
+  const res = await fetch(`${API}/sessions`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name})
+  });
+  const d = await res.json();
+  toast(`Session "${d.name}" created!`, "success");
+  refreshActiveSession();
+}
+
+async function refreshActiveSession() {
+  const res = await fetch(`${API}/sessions/active`);
+  const sess = await res.json();
+  const info = document.getElementById("active-session-info");
+  if (sess) {
+    info.classList.remove("hidden");
+    document.getElementById("active-session-name").textContent = sess.name;
+    const st = sess.stats || {};
+    document.getElementById("active-session-stats").textContent =
+      `Present: ${st.present || 0} / ${st.total || 0}`;
+    document.getElementById("cam-session-name").textContent = sess.name;
+    document.getElementById("session-label").textContent = sess.name;
+  } else {
+    info.classList.add("hidden");
+  }
+}
+
+async function endActiveSession() {
+  const res = await fetch(`${API}/sessions/active`);
+  const sess = await res.json();
+  if (!sess) return toast("No active session", "warning");
+  await fetch(`${API}/sessions/${sess.id}/end`, {method:"POST"});
+  toast("Session ended");
+  refreshActiveSession();
+}
+
+async function refreshSessions() {
+  const res = await fetch(`${API}/sessions`);
+  const sessions = await res.json();
+  const tbody = document.getElementById("sessions-table-body");
+  if (sessions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px;">No sessions yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = sessions.map(s => `
+    <tr>
+      <td class="text-mono">${s.id}</td>
+      <td><strong>${s.name}</strong></td>
+      <td class="text-mono">${s.date}</td>
+      <td class="text-mono">${s.start_time}</td>
+      <td class="text-mono">${s.end_time || "—"}</td>
+      <td>${s.is_active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Ended</span>'}</td>
+      <td>
+        <button class="btn btn-ghost btn-xs" onclick="viewSessionAttendance(${s.id}, '${s.name}')">View</button>
+        ${s.is_active ? `<button class="btn btn-danger btn-xs" onclick="endSessionById(${s.id})">End</button>` : ''}
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function endSessionById(id) {
+  await fetch(`${API}/sessions/${id}/end`, {method:"POST"});
+  toast("Session ended");
+  refreshSessions();
+}
+
+async function viewSessionAttendance(id, name) {
+  navigate("attendance");
+  const sel = document.getElementById("att-session-filter");
+  // find or create option
+  let opt = Array.from(sel.options).find(o => o.value == id);
+  if (!opt) {
+    opt = new Option(name, id);
+    sel.add(opt);
+  }
+  sel.value = id;
+  filterAttendance();
+}
+
+// ── Attendance ───────────────────────────────────────────────────────────────
+
+async function refreshAttendance() {
+  const sel = document.getElementById("att-session-filter");
+  const sid = sel.value;
+  let records;
+  if (sid) {
+    const res = await fetch(`${API}/attendance/session/${sid}`);
+    records = await res.json();
+  } else {
+    const res = await fetch(`${API}/attendance/today`);
+    records = await res.json();
+  }
+  renderAttendanceTable(records);
+}
+
+function filterAttendance() { refreshAttendance(); }
+
+function renderAttendanceTable(records) {
+  document.getElementById("att-count").textContent = records.length;
+  const tbody = document.getElementById("att-table-body");
+  if (records.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px;">No records</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = records.map(r => {
+    const conf = Math.round((r.confidence || 0) * 100);
+    const live = Math.round((r.liveness_score || 0) * 100);
+    const time = r.check_in?.split("T")[1]?.slice(0,8) || r.check_in?.slice(-8) || "—";
+    return `
+      <tr>
+        <td><strong>${r.name}</strong></td>
+        <td class="text-mono" style="font-size:12px;">${r.employee_id}</td>
+        <td>${r.department || "—"}</td>
+        <td class="text-mono" style="font-size:12px;">${time}</td>
+        <td>
+          <div class="liveness-gauge">
+            <div class="gauge-bar"><div class="gauge-fill" style="width:${conf}%;background:var(--green);"></div></div>
+            ${conf}%
+          </div>
+        </td>
+        <td>
+          <div class="liveness-gauge">
+            <div class="gauge-bar"><div class="gauge-fill" style="width:${live}%;background:${live>=45?'var(--green)':'var(--red)'};"></div></div>
+            ${live}%
+          </div>
+        </td>
+        <td><span class="badge badge-green">${r.status || 'present'}</span></td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function populateSessionFilter() {
+  const sel = document.getElementById("att-session-filter");
+  const res = await fetch(`${API}/sessions`);
+  const sessions = await res.json();
+  // Keep "Today" option
+  while (sel.options.length > 1) sel.remove(1);
+  sessions.forEach(s => sel.add(new Option(`${s.date} — ${s.name}`, s.id)));
+}
+
+// ── Persons ──────────────────────────────────────────────────────────────────
+
+async function refreshPersons() {
+  const res = await fetch(`${API}/persons`);
+  const persons = await res.json();
+  document.getElementById("persons-subtitle").textContent =
+    `${persons.length} registered person${persons.length !== 1 ? "s" : ""}`;
+
+  const grid = document.getElementById("persons-grid");
+  if (persons.length === 0) {
+    grid.innerHTML = `<div class="text-muted" style="font-size:13px;padding:20px;">No persons registered yet. Click "Add Person".</div>`;
+    return;
+  }
+  grid.innerHTML = persons.map(p => {
+    const initials = p.name.split(" ").map(w => w[0]).join("").slice(0,2).toUpperCase();
+    return `
+      <div class="person-card">
+        <div class="person-avatar">
+          <img src="${API}/persons/${p.id}/photo" onerror="this.parentElement.innerHTML='<span>${initials}</span>'" alt="">
+        </div>
+        <div class="person-name">${p.name}</div>
+        <div class="person-id">${p.employee_id}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;">${p.department || "No dept."}</div>
+        <div style="margin-top:8px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-xs" onclick="openRegFaceModal(${p.id}, '${p.name.replace(/'/g,"\\'")}')">📸 Register Face</button>
+          <button class="btn btn-danger btn-xs" onclick="deletePerson(${p.id})">🗑</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ── Add Person Modal ──────────────────────────────────────────────────────────
+
+function openAddPersonModal() {
+  newPersonId = null;
+  regCapCount = 0;
+  document.getElementById("p-name").value = "";
+  document.getElementById("p-empid").value = "";
+  document.getElementById("p-dept").value = "";
+  document.getElementById("p-email").value = "";
+  document.getElementById("reg-count-txt").textContent = "0/5";
+  document.getElementById("reg-feedback").textContent = "";
+  document.getElementById("btn-finish-reg").disabled = true;
+  switchTab("add-person", "details");
+  openModal("modal-add-person");
+}
+
+async function saveNewPerson() {
+  const name = document.getElementById("p-name").value.trim();
+  const empid = document.getElementById("p-empid").value.trim();
+  if (!name || !empid) { toast("Name and Employee ID required", "warning"); return; }
+
+  const res = await fetch(`${API}/persons`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      name, employee_id: empid,
+      department: document.getElementById("p-dept").value,
+      email: document.getElementById("p-email").value,
+    })
+  });
+  const d = await res.json();
+  if (d.error) { toast(d.error, "error"); return; }
+  newPersonId = d.id;
+  toast(`Person "${name}" added!`, "success");
+  switchTab("add-person", "register");
+  startRegCamera();
+}
+
+async function startRegCamera() {
+  try {
+    regStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    document.getElementById("reg-video").srcObject = regStream;
+  } catch(e) {
+    toast("Cannot access webcam: " + e.message, "error");
+  }
+}
+
+async function captureFrame() {
+  if (!regStream || !newPersonId) return;
+  const video = document.getElementById("reg-video");
+  const canvas = document.getElementById("reg-canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  const b64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+
+  document.getElementById("reg-feedback").textContent = "Processing...";
+  const res = await fetch(`${API}/persons/${newPersonId}/register`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({image_b64: b64})
+  });
+  const d = await res.json();
+
+  if (d.error) {
+    document.getElementById("reg-feedback").textContent = "⚠ " + d.error;
+    return;
+  }
+
+  regCapCount++;
+  document.getElementById("reg-count-txt").textContent = `${regCapCount}/${MAX_SAMPLES}`;
+  document.getElementById("reg-feedback").textContent =
+    `✓ Sample ${regCapCount} captured (quality: ${Math.round(d.quality*100)}%)`;
+
+  // Update steps
+  const steps = document.querySelectorAll("#reg-steps .reg-step");
+  steps.forEach((s, i) => {
+    s.classList.toggle("done", i < regCapCount);
+    s.classList.toggle("active", i === regCapCount);
+  });
+
+  if (regCapCount >= MAX_SAMPLES) {
+    document.getElementById("btn-finish-reg").disabled = false;
+    document.getElementById("btn-capture").disabled = true;
+    document.getElementById("reg-feedback").textContent = "✅ All samples captured! Click Done.";
+  }
+}
+
+function finishRegistration() {
+  stopRegCamera_inner();
+  closeModal("modal-add-person");
+  refreshPersons();
+  toast("Person registered successfully!", "success");
+}
+
+function stopRegCamera_inner() {
+  if (regStream) { regStream.getTracks().forEach(t => t.stop()); regStream = null; }
+}
+
+// ── Register face for existing person ────────────────────────────────────────
+
+function openRegFaceModal(pid, name) {
+  regPersonId2 = pid;
+  regCapCount2 = 0;
+  document.getElementById("reg-person-name").textContent = name;
+  document.getElementById("reg-cap-count").textContent = "0";
+  document.getElementById("reg-feedback2").textContent = "";
+  document.getElementById("btn-fin2").disabled = true;
+  openModal("modal-reg-face");
+  startRegCamera2();
+}
+
+async function startRegCamera2() {
+  try {
+    regStream2 = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    document.getElementById("reg-video2").srcObject = regStream2;
+  } catch(e) {
+    toast("Cannot access webcam: " + e.message, "error");
+  }
+}
+
+async function captureFrame2() {
+  if (!regStream2 || !regPersonId2) return;
+  const video = document.getElementById("reg-video2");
+  const canvas = document.getElementById("reg-canvas2");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  const b64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+
+  document.getElementById("reg-feedback2").textContent = "Processing...";
+  const res = await fetch(`${API}/persons/${regPersonId2}/register`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({image_b64: b64})
+  });
+  const d = await res.json();
+  if (d.error) {
+    document.getElementById("reg-feedback2").textContent = "⚠ " + d.error;
+    return;
+  }
+  regCapCount2++;
+  document.getElementById("reg-cap-count").textContent = regCapCount2;
+  document.getElementById("reg-feedback2").textContent =
+    `✓ Sample ${regCapCount2} captured`;
+  if (regCapCount2 >= MAX_SAMPLES) {
+    document.getElementById("btn-fin2").disabled = false;
+  }
+}
+
+function finishRegistration2() {
+  stopRegCamera();
+  refreshPersons();
+  toast("Face samples registered!", "success");
+}
+
+function stopRegCamera() {
+  if (regStream2) { regStream2.getTracks().forEach(t => t.stop()); regStream2 = null; }
+}
+
+async function deletePerson(pid) {
+  if (!confirm("Delete this person and all their data?")) return;
+  await fetch(`${API}/persons/${pid}`, {method:"DELETE"});
+  toast("Person deleted");
+  refreshPersons();
+}
+
+// ── Export ───────────────────────────────────────────────────────────────────
+
+function exportData(type) {
+  window.open(`${API}/export/${type}`, "_blank");
+  setTimeout(refreshExports, 2000);
+}
+
+async function refreshExports() {
+  const res = await fetch(`${API}/exports/list`);
+  const files = await res.json();
+  const list = document.getElementById("exports-list");
+  if (files.length === 0) {
+    list.innerHTML = `<div class="text-muted" style="font-size:12px;text-align:center;padding:20px;">No exports yet</div>`;
+    return;
+  }
+  list.innerHTML = files.map(f => `
+    <div class="export-file">
+      <div>
+        <div style="font-weight:600;font-size:13px;">${f.name}</div>
+        <div style="font-size:11px;color:var(--text2);">${f.modified} · ${f.size_kb} KB</div>
+      </div>
+      <a class="btn btn-ghost btn-xs" href="${API.replace('/api','')}/exports/${f.name}" target="_blank">⬇ Download</a>
+    </div>
+  `).join("");
+}
+
+async function importPersons() {
+  const file = document.getElementById("import-file").files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API}/import/persons`, {method:"POST", body:form});
+  const d = await res.json();
+  const div = document.getElementById("import-result");
+  div.classList.remove("hidden");
+  div.textContent = `✓ Added: ${d.added} · Skipped (duplicate): ${d.skipped}`;
+  toast(`Imported ${d.added} persons`, "success");
+  setTimeout(() => div.classList.add("hidden"), 5000);
+}
+
+// ── Utility ──────────────────────────────────────────────────────────────────
+
+function openModal(id) {
+  document.getElementById(id).classList.add("open");
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove("open");
+  stopRegCamera_inner();
+}
+
+function switchTab(form, tab) {
+  const container = document.getElementById("modal-add-person");
+  container.querySelectorAll(".tab").forEach((t,i) => {
+    const names = ["details","register"];
+    t.classList.toggle("active", names[i] === tab);
+  });
+  document.getElementById(`${form}-details`).classList.toggle("active", tab==="details");
+  document.getElementById(`${form}-register`).classList.toggle("active", tab==="register");
+}
+
+function toast(msg, type="success") {
+  const c = document.getElementById("toast-container");
+  const t = document.createElement("div");
+  t.className = `toast ${type === "error" ? "error" : type === "warning" ? "warning" : ""}`;
+  const icon = type === "error" ? "❌" : type === "warning" ? "⚠️" : "✅";
+  t.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity="0"; t.style.transform="translateX(30px)"; t.style.transition="all 0.3s"; setTimeout(()=>t.remove(),300); }, 3000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+window.addEventListener("DOMContentLoaded", () => {
+  refreshDashboard();
+  refreshActiveSession();
+
+  // Ping backend
+  fetch(`${API}/camera/status`).catch(() => {
+    toast("Backend not running. Start app.py first.", "warning");
+  });
+});
+</script>
+</body>
+</html>

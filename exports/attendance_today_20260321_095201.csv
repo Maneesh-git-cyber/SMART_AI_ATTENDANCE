@@ -1,0 +1,4 @@
+name,employee_id,department,check_in,confidence,liveness_score,status
+Maneesh kumar,U24CS167,CSE,2026-03-21 04:20:59,0.9518054127693176,0.593,present
+Maneesh kumar,U24CS167,CSE,2026-03-21 04:06:44,0.9485478401184082,0.467,present
+Maneesh kumar,U24CS167,CSE,2026-03-21 04:05:26,0.9438295960426331,0.507,present
