@@ -252,3 +252,13 @@ core/face_engine.py MTCNN detection + FaceNet recognition
 core/anti_spoofing.py Multi-cue liveness detection
 core/export_utils.py  CSV + Excel export/import
 frontend/index.html   Full dashboard UI (no framework needed)
+
+================================================================
+PREVIEW OF WEBPAGE UI
+================================================================
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/342554fd-ba4a-4936-9254-4e4ecda7c3d0" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/c7c7475b-287a-4eec-a62d-2d42861ebc74" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/7a2ac075-416b-4b92-9f50-5c4beb6c0fd7" />
