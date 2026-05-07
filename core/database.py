@@ -305,16 +305,27 @@ def get_attendance_for_session(session_id: int):
 
 
 def get_today_attendance():
+    """
+    Returns one row per unique person today (earliest check-in).
+    Prevents the dashboard table from showing the same person multiple times.
+    """
     conn = get_connection()
     try:
         today = date.today().strftime("%Y-%m-%d")
         rows = conn.execute("""
-            SELECT a.*, p.name, p.employee_id, p.department, s.name as session_name
+            SELECT
+                p.name, p.employee_id, p.department,
+                MIN(a.check_in)   AS check_in,
+                MAX(a.confidence) AS confidence,
+                MAX(a.liveness_score) AS liveness_score,
+                a.status,
+                s.name AS session_name
             FROM attendance a
             JOIN persons p ON p.id = a.person_id
             JOIN sessions s ON s.id = a.session_id
-            WHERE s.date=?
-            ORDER BY a.check_in DESC
+            WHERE s.date = ?
+            GROUP BY a.person_id
+            ORDER BY check_in ASC
         """, (today,)).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -346,21 +357,35 @@ def log_spoof_attempt(reason: str, snapshot_path: str = ""):
 
 
 def get_attendance_stats(session_id: int = None):
+    """
+    session_id given -> count unique persons for that session.
+    No session_id    -> count UNIQUE persons present TODAY (across all sessions today).
+    Dashboard always calls with no session_id to get today-wide unique count.
+    """
     conn = get_connection()
     try:
-        total_persons = conn.execute("SELECT COUNT(*) as c FROM persons WHERE is_active=1").fetchone()["c"]
+        total_persons = conn.execute(
+            "SELECT COUNT(*) as c FROM persons WHERE is_active=1"
+        ).fetchone()["c"]
+
         if session_id:
             present = conn.execute(
-                "SELECT COUNT(*) as c FROM attendance WHERE session_id=?", (session_id,)
+                "SELECT COUNT(DISTINCT person_id) as c FROM attendance WHERE session_id=?",
+                (session_id,)
             ).fetchone()["c"]
         else:
-            sess = get_active_session()
-            if sess:
-                present = conn.execute(
-                    "SELECT COUNT(*) as c FROM attendance WHERE session_id=?", (sess["id"],)
-                ).fetchone()["c"]
-            else:
-                present = 0
-        return {"total": total_persons, "present": present, "absent": total_persons - present}
+            today = date.today().strftime("%Y-%m-%d")
+            present = conn.execute("""
+                SELECT COUNT(DISTINCT a.person_id) as c
+                FROM attendance a
+                JOIN sessions s ON s.id = a.session_id
+                WHERE s.date = ?
+            """, (today,)).fetchone()["c"]
+
+        return {
+            "total":   total_persons,
+            "present": present,
+            "absent":  max(0, total_persons - present),
+        }
     finally:
         conn.close()

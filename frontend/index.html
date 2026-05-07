@@ -1095,14 +1095,16 @@ function navigate(page) {
   const labels = ["dashboard","live","persons","sessions","attendance","export"];
   items[labels.indexOf(page)]?.classList.add("active");
 
-  if (page === "persons") refreshPersons();
-  if (page === "sessions") refreshSessions();
+  if (page === "persons")    refreshPersons();
+  if (page === "sessions")   refreshSessions();
   if (page === "attendance") { refreshAttendance(); populateSessionFilter(); }
-  if (page === "export") refreshExports();
-  if (page === "dashboard") refreshDashboard();
+  if (page === "export")     refreshExports();
+  if (page === "dashboard")  { refreshDashboard(); startDashboardAutoRefresh(); }
 }
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
+
+let dashInterval = null;
 
 async function refreshDashboard() {
   document.getElementById("dash-date").textContent = new Date().toLocaleDateString("en-IN", {
@@ -1110,45 +1112,71 @@ async function refreshDashboard() {
   });
 
   try {
+    // Always fetch TODAY-wide unique stats (no session_id = today across all sessions)
     const [statsRes, todayRes, sessRes] = await Promise.all([
-      fetch(`${API}/attendance/stats`),
-      fetch(`${API}/attendance/today`),
+      fetch(`${API}/attendance/stats`),          // no session_id = today unique count
+      fetch(`${API}/attendance/today`),           // unique persons today
       fetch(`${API}/sessions/active`),
     ]);
 
     const stats = await statsRes.json();
     const today = await todayRes.json();
-    const sess = await sessRes.json();
+    const sess  = await sessRes.json();
 
-    document.getElementById("stat-total").textContent = stats.total;
+    // Stats tiles
+    document.getElementById("stat-total").textContent   = stats.total;
     document.getElementById("stat-present").textContent = stats.present;
-    document.getElementById("stat-absent").textContent = stats.absent;
+    document.getElementById("stat-absent").textContent  = stats.absent;
     const rate = stats.total > 0 ? Math.round((stats.present / stats.total) * 100) : 0;
     document.getElementById("stat-rate").textContent = rate + "%";
 
+    // Session badge
     if (sess) {
       document.getElementById("session-badge").textContent = sess.name;
-      document.getElementById("session-badge").className = "badge badge-green";
+      document.getElementById("session-badge").className   = "badge badge-green";
       document.getElementById("session-label").textContent = sess.name;
+    } else {
+      document.getElementById("session-badge").textContent = "No Active Session";
+      document.getElementById("session-badge").className   = "badge badge-muted";
     }
 
+    // Today's attendance table — one row per unique person
     const tbody = document.getElementById("today-table-body");
     if (today.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No attendance marked yet</td></tr>`;
     } else {
-      tbody.innerHTML = today.map(r => `
-        <tr>
-          <td><strong>${r.name}</strong></td>
-          <td class="text-mono" style="font-size:12px;">${r.employee_id}</td>
-          <td>${r.department || "—"}</td>
-          <td class="text-mono" style="font-size:12px;">${r.check_in.split("T")[1]?.slice(0,8) || r.check_in.slice(-8)}</td>
-          <td><div class="liveness-gauge"><div class="gauge-bar"><div class="gauge-fill" style="width:${Math.round(r.confidence*100)}%;background:var(--green);"></div></div>${Math.round(r.confidence*100)}%</div></td>
-        </tr>
-      `).join("");
+      tbody.innerHTML = today.map(r => {
+        const confPct = Math.round((r.confidence || 0) * 100);
+        const timeStr = (r.check_in || "").replace("T", " ").slice(0, 19);
+        const hms     = timeStr.slice(-8);
+        return `
+          <tr>
+            <td><strong>${r.name}</strong></td>
+            <td class="text-mono" style="font-size:12px;">${r.employee_id}</td>
+            <td>${r.department || "—"}</td>
+            <td class="text-mono" style="font-size:12px;">${hms}</td>
+            <td>
+              <div class="liveness-gauge">
+                <div class="gauge-bar">
+                  <div class="gauge-fill" style="width:${confPct}%;background:var(--green);"></div>
+                </div>
+                ${confPct}%
+              </div>
+            </td>
+          </tr>`;
+      }).join("");
     }
   } catch(e) {
-    console.error(e);
+    console.error("Dashboard refresh error:", e);
   }
+}
+
+function startDashboardAutoRefresh() {
+  if (dashInterval) clearInterval(dashInterval);
+  dashInterval = setInterval(() => {
+    const dash = document.getElementById("page-dashboard");
+    if (dash && dash.classList.contains("active")) refreshDashboard();
+  }, 3000);
 }
 
 // ── Camera ──────────────────────────────────────────────────────────────────
@@ -1220,7 +1248,6 @@ function updateDetectionPanel(detections) {
   }
 
   panel.innerHTML = detections.map((d, i) => {
-    // liveness_score and photo_score are 0–100
     const livePct   = Math.min(100, Math.round(d.liveness_score || 0));
     const photoPct  = Math.min(100, Math.round(d.photo_score   || 0));
     const conf      = Math.round((d.confidence || 0) * 100);
@@ -1232,12 +1259,13 @@ function updateDetectionPanel(detections) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <strong style="font-size:13px;">${d.name}</strong>
           <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
-            ${d.marked ? '<span class="badge badge-green">✓ Marked</span>' : ''}
-            ${d.is_live ? '<span class="badge badge-green">✓ Live</span>' : '<span class="badge badge-red">⛔ Photo/Spoof</span>'}
+            ${d.marked ? '<span class="badge badge-green" style="font-size:12px;">✓ Attendance Marked</span>' : ''}
+            ${d.is_live && !d.marked ? '<span class="badge badge-blue">✓ Live</span>' : ''}
+            ${!d.is_live ? '<span class="badge badge-red">⛔ Photo/Spoof</span>' : ''}
           </div>
         </div>
         ${d.person_id ? `<div style="font-size:11px;color:var(--text2);margin-bottom:5px;">Match: ${conf}%</div>` : ''}
-        <div style="font-size:10px;color:var(--text2);margin-bottom:2px;letter-spacing:0.5px;">LIVENESS SCORE &nbsp;(need ≥ 60 to pass)</div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:2px;letter-spacing:0.5px;">LIVENESS SCORE &nbsp;(need ≥ 60)</div>
         <div class="liveness-gauge" style="margin-bottom:7px;">
           <div class="gauge-bar" style="height:7px;"><div class="gauge-fill" style="width:${livePct}%;background:${liveColor};height:7px;border-radius:4px;"></div></div>
           <span style="font-size:13px;font-family:'JetBrains Mono';color:${liveColor};font-weight:800;min-width:32px;text-align:right;">${livePct}</span>
@@ -1283,13 +1311,63 @@ function addEvent(name, confidence) {
 
 async function pollStats() {
   try {
-    const res = await fetch(`${API}/attendance/stats`);
-    const s = await res.json();
-    document.getElementById("stat-total").textContent = s.total;
+    // Always fetch stats for the ACTIVE session specifically
+    const sessRes = await fetch(`${API}/sessions/active`);
+    const sess    = await sessRes.json();
+
+    let statsUrl = `${API}/attendance/stats`;
+    if (sess && sess.id) statsUrl += `?session_id=${sess.id}`;
+
+    const res = await fetch(statsUrl);
+    const s   = await res.json();
+
+    // Update all stat tiles
+    document.getElementById("stat-total").textContent   = s.total;
     document.getElementById("stat-present").textContent = s.present;
-    document.getElementById("stat-absent").textContent = s.absent;
-    const rate = s.total > 0 ? Math.round((s.present/s.total)*100) : 0;
+    document.getElementById("stat-absent").textContent  = s.absent;
+    const rate = s.total > 0 ? Math.round((s.present / s.total) * 100) : 0;
     document.getElementById("stat-rate").textContent = rate + "%";
+
+    // Update the Live Feed session panel counter
+    if (sess) {
+      const info = document.getElementById("active-session-info");
+      info.classList.remove("hidden");
+      document.getElementById("active-session-name").textContent = sess.name;
+      document.getElementById("active-session-stats").textContent =
+        `Present: ${s.present} / ${s.total}`;
+      document.getElementById("cam-session-name").textContent  = sess.name;
+      document.getElementById("session-label").textContent     = sess.name;
+      document.getElementById("session-badge").textContent     = sess.name;
+      document.getElementById("session-badge").className       = "badge badge-green";
+    }
+
+    // Refresh today's attendance table if dashboard is visible
+    const dash = document.getElementById("page-dashboard");
+    if (dash && dash.classList.contains("active")) {
+      refreshTodayTable();
+    }
+  } catch(e) {}
+}
+
+async function refreshTodayTable() {
+  try {
+    const res   = await fetch(`${API}/attendance/today`);
+    const today = await res.json();
+    const tbody = document.getElementById("today-table-body");
+    if (!tbody) return;
+    if (today.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-muted" style="text-align:center;padding:20px;">No attendance marked yet</td></tr>`;
+    } else {
+      tbody.innerHTML = today.map(r => `
+        <tr>
+          <td><strong>${r.name}</strong></td>
+          <td class="text-mono" style="font-size:12px;">${r.employee_id}</td>
+          <td>${r.department || "—"}</td>
+          <td class="text-mono" style="font-size:12px;">${(r.check_in||"").slice(-8)}</td>
+          <td><div class="liveness-gauge"><div class="gauge-bar"><div class="gauge-fill" style="width:${Math.round((r.confidence||0)*100)}%;background:var(--green);"></div></div>${Math.round((r.confidence||0)*100)}%</div></td>
+        </tr>
+      `).join("");
+    }
   } catch(e) {}
 }
 
@@ -1710,6 +1788,7 @@ function toast(msg, type="success") {
 window.addEventListener("DOMContentLoaded", () => {
   refreshDashboard();
   refreshActiveSession();
+  startDashboardAutoRefresh();   // keep dashboard live even when camera is off
 
   // Ping backend
   fetch(`${API}/camera/status`).catch(() => {

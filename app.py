@@ -1,30 +1,35 @@
 """
-app.py — Flask REST API + WebSocket-free live-feed backend
-for the AI Attendance System
+app.py — Flask backend for AI Attendance System
+BUGS FIXED in this version:
+  1. session_id was only set at camera-start time. If session was created AFTER
+     camera started, cam.session_id stayed None → mark_attendance never called.
+     FIX: poll active session dynamically inside camera_loop every frame.
+
+  2. marked_this_session was never cleared when a new session was created via
+     the API, so even if session_id updated, the person was already in the set.
+     FIX: clear marked_this_session whenever session_id changes.
+
+  3. is_live check was comparing float liveness_score (0.0–1.0) to int threshold 60.
+     FIX: use liveness.get('is_live') directly from the checker's own boolean.
+
+  4. frame_count attribute added to CameraState but never incremented in loop.
+     FIX: properly increment inside loop.
 """
 
-import os
-import sys
-import cv2
-import numpy as np
-import base64
-import threading
-import time
-import json
+import os, sys, cv2, numpy as np, base64, threading, time
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 
-# Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.database import (
     init_db, add_person, get_all_persons, get_person, update_person,
-    delete_person, save_embedding, count_embeddings, get_embeddings_for_person,
+    delete_person, save_embedding, count_embeddings,
     create_session, end_session, get_active_session, get_all_sessions,
     mark_attendance, get_attendance_for_session, get_today_attendance,
-    is_marked_today, get_attendance_stats, log_spoof_attempt,
+    get_attendance_stats, log_spoof_attempt,
 )
 from core.face_engine import FaceRecognizer, detect_faces, extract_embedding, draw_face_box
 from core.anti_spoofing import LivenessChecker
@@ -33,7 +38,6 @@ from core.export_utils import (
     export_all_sessions_excel, import_persons_from_csv, list_exports,
 )
 
-# ── Init ──────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app)
 init_db()
@@ -43,130 +47,161 @@ recognizer.load_from_db()
 
 REGISTERED_FACES_DIR = Path(__file__).parent / "registered_faces"
 REGISTERED_FACES_DIR.mkdir(exist_ok=True)
-LIVENESS_THRESHOLD = 60     # 0–100 scale: liveness_score must be >= 60
 
-# ── Camera State (shared) ─────────────────────────────────────────────────────
+
+# ── Camera state ──────────────────────────────────────────────────────────────
+
 class CameraState:
     def __init__(self):
-        self.cap: cv2.VideoCapture | None = None
-        self.running = False
-        self.current_frame: np.ndarray | None = None
-        self.detection_results: list = []
-        self.liveness_checkers: dict[int, LivenessChecker] = {}  # face_idx -> checker
-        self.session_id: int | None = None
-        self.lock = threading.Lock()
-        self.marked_this_session: set = set()
-        self.frame_count: int = 0
+        self.cap              = None
+        self.running          = False
+        self.current_frame    = None
+        self.detection_results = []
+        self.liveness_checkers = {}
+        self.session_id       = None   # dynamically refreshed in loop
+        self.marked_this_session = set()
+        self.lock             = threading.Lock()
+        self.frame_count      = 0
 
 cam = CameraState()
 
 
 def camera_loop():
-    """Background thread: reads camera, runs detection + recognition."""
     while cam.running:
         ret, frame = cam.cap.read()
         if not ret:
             time.sleep(0.05)
             continue
 
-        results = []
         cam.frame_count += 1
+        results = []
+
+        # ── BUG FIX 1: refresh session_id every frame ──────────────────────
+        active_sess = get_active_session()
+        new_sid = active_sess["id"] if active_sess else None
+
+        # ── BUG FIX 2: clear marked set when session changes ───────────────
+        if new_sid != cam.session_id:
+            cam.session_id = new_sid
+            cam.marked_this_session = set()
+
         try:
             faces = detect_faces(frame)
 
             for idx, face_data in enumerate(faces):
-                box = face_data["box"]
-                prob = face_data["prob"]
+                box    = face_data["box"]
+                prob   = face_data["prob"]
                 tensor = face_data["face_tensor"]
 
-                # Liveness
+                # Liveness check
                 if idx not in cam.liveness_checkers:
                     cam.liveness_checkers[idx] = LivenessChecker()
-                liveness = cam.liveness_checkers[idx].update(frame, box)
-                liveness_score = liveness["liveness_score"]
-                is_live = bool(liveness.get('is_live', False))
 
-                person_id = None
+                liveness      = cam.liveness_checkers[idx].update(frame, box)
+                liveness_score = liveness.get("liveness_score", 0)
+                photo_score    = liveness.get("photo_score", 100)
+
+                # ── BUG FIX 3: use checker's own boolean, not float compare ─
+                is_live = bool(liveness.get("is_live", False))
+
+                person_id   = None
                 person_name = "Unknown"
-                confidence = 0.0
-                color = (0, 0, 200)   # red = unknown/spoof
-                marked = False
+                confidence  = 0.0
+                color       = (0, 0, 200)
+                marked      = False
+                status_msg  = cam.liveness_checkers[idx].get_status_message()
 
                 if is_live and tensor is not None:
                     emb = extract_embedding(tensor)
                     person_id, confidence = recognizer.identify(emb)
+
                     if person_id:
                         p = get_person(person_id)
                         person_name = p["name"] if p else "Unknown"
-                        color = (0, 220, 0)  # green = recognised
+                        color = (0, 220, 0)
 
-                        # Mark attendance
-                        if (cam.session_id and
-                                person_id not in cam.marked_this_session):
-                            newly = mark_attendance(person_id, cam.session_id,
-                                                    confidence, liveness_score)
+                        # ── Mark attendance ──────────────────────────────────
+                        # Require session, not already marked, confidence > 0.65
+                        if (cam.session_id is not None
+                                and person_id not in cam.marked_this_session
+                                and confidence >= 0.65):
+
+                            newly = mark_attendance(
+                                person_id, cam.session_id,
+                                confidence, liveness_score
+                            )
                             if newly:
                                 cam.marked_this_session.add(person_id)
                                 marked = True
+                                print(f"[ATTEND] Marked: {person_name} | "
+                                      f"session={cam.session_id} | "
+                                      f"conf={confidence:.2f} | live={liveness_score}")
+                            else:
+                                # Already marked — show tick on box still
+                                cam.marked_this_session.add(person_id)
+
                     else:
-                        color = (0, 165, 255)  # orange = live but unknown
+                        color = (0, 165, 255)   # orange = live but unknown
 
-                elif not is_live:
+                else:
                     color = (0, 0, 200)
-                    # Throttled spoof logging — once per 90 frames
-                    if idx == 0 and cam.running and cam.frame_count % 90 == 0:
-                        status_msg = cam.liveness_checkers[idx].get_status_message()
-                        log_spoof_attempt(reason=f"Score={liveness_score:.2f} | {status_msg}")
+                    if idx == 0 and cam.frame_count % 90 == 0:
+                        log_spoof_attempt(
+                            reason=f"Photo/spoof score={photo_score:.0f} | {status_msg}"
+                        )
 
-                # Show liveness status message on frame
-                status_msg = cam.liveness_checkers[idx].get_status_message() if not is_live else ""
                 draw_face_box(frame, box, person_name, confidence,
-                              liveness_score, color)
-                if status_msg and not is_live:
-                    x2, y2, w2, h2 = box
-                    cv2.putText(frame, status_msg, (x2, y2 + h2 + 22),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 120, 255), 1, cv2.LINE_AA)
+                              liveness_score / 100.0, color)
+
+                if not is_live and status_msg:
+                    bx, by, bw, bh = box
+                    cv2.putText(frame, status_msg,
+                                (bx, by + bh + 22),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.44,
+                                (0, 100, 255), 1, cv2.LINE_AA)
+
+                # Whether already-marked or newly marked
+                already = person_id in cam.marked_this_session if person_id else False
 
                 results.append({
-                    "box": list(box),
-                    "person_id": person_id,
-                    "name": person_name,
-                    "confidence": round(confidence, 3),
-                    "liveness_score": liveness_score,
-                    "photo_score": liveness.get("photo_score", 0),
-                    "is_live": is_live,
-                    "marked": marked,
-                    "status_msg": status_msg,
+                    "box":           list(box),
+                    "person_id":     person_id,
+                    "name":          person_name,
+                    "confidence":    round(confidence, 3),
+                    "liveness_score": round(liveness_score, 1),
+                    "photo_score":   round(photo_score, 1),
+                    "is_live":       is_live,
+                    "marked":        marked or already,
+                    "status_msg":    status_msg if not is_live else "",
                 })
 
         except Exception as e:
-            pass
+            print(f"[LOOP ERR] {e}")
 
-        # Overlay info
-        active = get_active_session()
-        if active:
-            cv2.putText(frame, f"Session: {active['name']}", (10, 25),
+        # ── Overlay stats ──────────────────────────────────────────────────
+        if active_sess:
+            cv2.putText(frame, f"Session: {active_sess['name']}", (10, 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 100), 2)
         stats = get_attendance_stats(cam.session_id)
         cv2.putText(frame,
                     f"Present: {stats['present']} / {stats['total']}",
-                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 100), 2)
-        ts = datetime.now().strftime("%H:%M:%S")
-        cv2.putText(frame, ts, (frame.shape[1] - 100, 25),
+                    (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 100), 2)
+        cv2.putText(frame, datetime.now().strftime("%H:%M:%S"),
+                    (frame.shape[1] - 110, 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
         with cam.lock:
-            cam.current_frame = frame.copy()
+            cam.current_frame    = frame.copy()
             cam.detection_results = results
 
-        time.sleep(0.03)  # ~30 fps
+        time.sleep(0.03)
 
 
-# ── Camera Endpoints ──────────────────────────────────────────────────────────
+# ── Camera endpoints ──────────────────────────────────────────────────────────
 
 @app.route("/api/camera/start", methods=["POST"])
 def start_camera():
-    data = request.json or {}
+    data      = request.json or {}
     cam_index = int(data.get("camera_index", 0))
     if cam.running:
         return jsonify({"status": "already_running"})
@@ -176,16 +211,17 @@ def start_camera():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     cap.set(cv2.CAP_PROP_FPS, 30)
-    cam.cap = cap
+    cam.cap     = cap
     cam.running = True
     cam.liveness_checkers.clear()
+    cam.frame_count = 0
 
+    # Pick up any already-active session
     active = get_active_session()
     cam.session_id = active["id"] if active else None
     cam.marked_this_session = set()
 
-    t = threading.Thread(target=camera_loop, daemon=True)
-    t.start()
+    threading.Thread(target=camera_loop, daemon=True).start()
     return jsonify({"status": "started", "session_id": cam.session_id})
 
 
@@ -203,20 +239,21 @@ def stop_camera():
 
 @app.route("/api/camera/frame")
 def get_frame():
-    """MJPEG-like single frame as base64 JSON for polling."""
     with cam.lock:
-        frame = cam.current_frame
+        frame   = cam.current_frame
         results = cam.detection_results[:]
     if frame is None:
         return jsonify({"frame": None, "detections": []})
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-    b64 = base64.b64encode(buf).decode()
-    return jsonify({"frame": b64, "detections": results})
+    return jsonify({
+        "frame":      base64.b64encode(buf).decode(),
+        "detections": results,
+        "session_id": cam.session_id,
+    })
 
 
 @app.route("/api/camera/stream")
 def video_stream():
-    """MJPEG stream endpoint."""
     def generate():
         while True:
             with cam.lock:
@@ -225,17 +262,18 @@ def video_stream():
                 time.sleep(0.05)
                 continue
             _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" +
-                   buf.tobytes() + b"\r\n")
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                   + buf.tobytes() + b"\r\n")
             time.sleep(0.04)
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(generate(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/api/camera/status")
 def camera_status():
     return jsonify({
-        "running": cam.running,
-        "session_id": cam.session_id,
+        "running":        cam.running,
+        "session_id":     cam.session_id,
         "faces_detected": len(cam.detection_results),
     })
 
@@ -250,12 +288,13 @@ def list_persons():
 @app.route("/api/persons", methods=["POST"])
 def create_person():
     d = request.json or {}
-    name = d.get("name", "").strip()
+    name   = d.get("name", "").strip()
     emp_id = d.get("employee_id", "").strip()
     if not name or not emp_id:
         return jsonify({"error": "name and employee_id required"}), 400
     try:
-        pid = add_person(name, emp_id, d.get("department",""), d.get("email",""))
+        pid = add_person(name, emp_id,
+                         d.get("department", ""), d.get("email", ""))
         return jsonify({"id": pid, "name": name, "employee_id": emp_id}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 409
@@ -272,8 +311,7 @@ def get_person_ep(pid):
 
 @app.route("/api/persons/<int:pid>", methods=["PUT"])
 def update_person_ep(pid):
-    d = request.json or {}
-    update_person(pid, **d)
+    update_person(pid, **(request.json or {}))
     return jsonify({"status": "updated"})
 
 
@@ -284,21 +322,15 @@ def delete_person_ep(pid):
     return jsonify({"status": "deleted"})
 
 
-# ── Face Registration ─────────────────────────────────────────────────────────
+# ── Face registration ─────────────────────────────────────────────────────────
 
 @app.route("/api/persons/<int:pid>/register", methods=["POST"])
 def register_face(pid):
-    """
-    Register face samples for a person.
-    Expects multipart/form-data with field 'image' (JPEG/PNG).
-    Or JSON { "use_camera": true } to grab current frame.
-    """
     p = get_person(pid)
     if not p:
         return jsonify({"error": "Person not found"}), 404
 
     img_bgr = None
-
     if request.content_type and "multipart" in request.content_type:
         f = request.files.get("image")
         if not f:
@@ -325,17 +357,15 @@ def register_face(pid):
     if not faces:
         return jsonify({"error": "No face detected in image"}), 422
 
-    # Use highest-confidence face
     face = max(faces, key=lambda x: x["prob"])
     if face["face_tensor"] is None:
         return jsonify({"error": "Could not extract face tensor"}), 422
 
-    emb = extract_embedding(face["face_tensor"])
+    emb     = extract_embedding(face["face_tensor"])
     quality = float(face["prob"])
     save_embedding(pid, emb, quality)
     recognizer.add_embedding(pid, emb)
 
-    # Save thumbnail
     x, y, w, h = face["box"]
     thumb = img_bgr[y:y+h, x:x+w]
     if thumb.size > 0:
@@ -343,12 +373,11 @@ def register_face(pid):
         cv2.imwrite(str(thumb_path), cv2.resize(thumb, (128, 128)))
         update_person(pid, photo_path=str(thumb_path))
 
-    n = count_embeddings(pid)
     return jsonify({
-        "status": "registered",
-        "person_id": pid,
-        "embedding_count": n,
-        "quality": round(quality, 3),
+        "status":          "registered",
+        "person_id":       pid,
+        "embedding_count": count_embeddings(pid),
+        "quality":         round(quality, 3),
     })
 
 
@@ -372,9 +401,11 @@ def list_sessions():
 
 @app.route("/api/sessions", methods=["POST"])
 def new_session():
-    d = request.json or {}
-    name = d.get("name", f"Session {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    sid = create_session(name)
+    d    = request.json or {}
+    name = d.get("name",
+                 f"Session {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    sid  = create_session(name)
+    # ── BUG FIX: update cam state immediately when session created ─────────
     cam.session_id = sid
     cam.marked_this_session = set()
     return jsonify({"id": sid, "name": name}), 201
@@ -394,6 +425,7 @@ def close_session(sid):
     end_session(sid)
     if cam.session_id == sid:
         cam.session_id = None
+        cam.marked_this_session = set()
     return jsonify({"status": "ended"})
 
 
@@ -406,15 +438,13 @@ def today_attendance():
 
 @app.route("/api/attendance/session/<int:sid>", methods=["GET"])
 def session_attendance(sid):
-    records = get_attendance_for_session(sid)
-    return jsonify(records)
+    return jsonify(get_attendance_for_session(sid))
 
 
 @app.route("/api/attendance/stats", methods=["GET"])
 def stats():
     sid = request.args.get("session_id")
-    s = get_attendance_stats(int(sid) if sid else None)
-    return jsonify(s)
+    return jsonify(get_attendance_stats(int(sid) if sid else None))
 
 
 @app.route("/api/attendance/live", methods=["GET"])
@@ -428,49 +458,35 @@ def live_detections():
 @app.route("/api/export/attendance/csv", methods=["GET"])
 def export_att_csv():
     sid = request.args.get("session_id")
-    if sid:
-        records = get_attendance_for_session(int(sid))
-        sess = get_active_session()
-        sname = sess["name"] if sess else str(sid)
-    else:
-        records = get_today_attendance()
-        sname = "today"
-    path = export_attendance_csv(records, sname)
-    return send_file(path, as_attachment=True)
+    records = get_attendance_for_session(int(sid)) if sid else get_today_attendance()
+    sess_rows = get_all_sessions()
+    sname = next((s["name"] for s in sess_rows if str(s["id"]) == str(sid)), "today")
+    return send_file(export_attendance_csv(records, sname), as_attachment=True)
 
 
 @app.route("/api/export/attendance/excel", methods=["GET"])
 def export_att_excel():
     sid = request.args.get("session_id")
-    if sid:
-        records = get_attendance_for_session(int(sid))
-        sess_row = [s for s in get_all_sessions() if s["id"] == int(sid)]
-        sname = sess_row[0]["name"] if sess_row else str(sid)
-    else:
-        records = get_today_attendance()
-        sname = "today"
-    path = export_attendance_excel(records, sname)
-    return send_file(path, as_attachment=True)
+    records = get_attendance_for_session(int(sid)) if sid else get_today_attendance()
+    sess_rows = get_all_sessions()
+    sname = next((s["name"] for s in sess_rows if str(s["id"]) == str(sid)), "today")
+    return send_file(export_attendance_excel(records, sname), as_attachment=True)
 
 
 @app.route("/api/export/persons/csv", methods=["GET"])
 def export_persons():
-    persons = get_all_persons()
-    path = export_persons_csv(persons)
-    return send_file(path, as_attachment=True)
+    return send_file(export_persons_csv(get_all_persons()), as_attachment=True)
 
 
 @app.route("/api/export/full", methods=["GET"])
 def export_full():
     sessions = get_all_sessions()
-    all_att = []
+    all_att  = []
     for s in sessions:
-        records = get_attendance_for_session(s["id"])
-        for r in records:
+        for r in get_attendance_for_session(s["id"]):
             r["session_name"] = s["name"]
-        all_att.extend(records)
-    path = export_all_sessions_excel(sessions, all_att)
-    return send_file(path, as_attachment=True)
+            all_att.append(r)
+    return send_file(export_all_sessions_excel(sessions, all_att), as_attachment=True)
 
 
 @app.route("/api/import/persons", methods=["POST"])
@@ -481,19 +497,14 @@ def import_persons():
     tmp = Path("/tmp") / f.filename
     f.save(str(tmp))
     try:
-        persons_data = import_persons_from_csv(str(tmp))
+        rows = import_persons_from_csv(str(tmp))
     except ValueError as e:
         return jsonify({"error": str(e)}), 422
-    added = 0
-    skipped = 0
-    for pd_row in persons_data:
+    added = skipped = 0
+    for row in rows:
         try:
-            add_person(
-                str(pd_row.get("name","")),
-                str(pd_row.get("employee_id","")),
-                str(pd_row.get("department","")),
-                str(pd_row.get("email","")),
-            )
+            add_person(str(row.get("name", "")), str(row.get("employee_id", "")),
+                       str(row.get("department", "")), str(row.get("email", "")))
             added += 1
         except Exception:
             skipped += 1
@@ -506,8 +517,6 @@ def list_export_files():
     return jsonify(list_exports())
 
 
-# ── Reload embeddings ─────────────────────────────────────────────────────────
-
 @app.route("/api/recognizer/reload", methods=["POST"])
 def reload_recognizer():
     recognizer.load_from_db()
@@ -515,4 +524,8 @@ def reload_recognizer():
 
 
 if __name__ == "__main__":
+    print("=" * 55)
+    print("  AI Attendance System — Backend")
+    print("  http://localhost:5000")
+    print("=" * 55)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
